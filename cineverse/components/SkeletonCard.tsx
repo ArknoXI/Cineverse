@@ -85,7 +85,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   
-  // --- Layout ---
   cardContainer: {
     backgroundColor: '#2C2C2E',
     borderRadius: 12,

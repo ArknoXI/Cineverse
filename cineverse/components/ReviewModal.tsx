@@ -78,7 +78,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         style={styles.overlay}
       >
         <View style={styles.container}>
-          {/* Cabeçalho */}
           <View style={styles.header}>
             <Text style={styles.title}>Avaliar Filme</Text>
             <TouchableOpacity onPress={onClose}>
@@ -94,7 +93,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             <ActivityIndicator color="#FFFFFF" style={{ margin: 20 }} />
           ) : (
             <>
-              {/* Estrelas */}
               <View style={styles.starsContainer}>
                 <StarRating 
                   rating={rating} 
@@ -106,7 +104,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 </Text>
               </View>
 
-              {/* Comentário */}
               <TextInput
                 style={styles.input}
                 placeholder="Escreva o que achou do filme..."
@@ -117,7 +114,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 maxLength={500}
               />
 
-              {/* Botão Salvar */}
               <TouchableOpacity 
                 style={[styles.submitButton, (rating === 0 || submitting) && styles.disabledButton]}
                 onPress={handleSubmit}
