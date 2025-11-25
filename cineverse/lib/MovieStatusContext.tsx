@@ -10,7 +10,6 @@ import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 
-
 interface Movie {
   id: string;
   titulo: string;
@@ -54,8 +53,8 @@ interface MovieStatusContextType {
   toggleLikeMovie: (movie: Movie) => void;
   toggleDislikeMovie: (movie: Movie) => void;
   toggleSaveMovie: (movie: Movie) => void;
-  addReview: (movie: Movie, rating: number, comment: string) => Promise<void>;
-  deleteReview: (movieId: number) => Promise<void>;
+  addReview: (movie: Movie, rating: number, comment: string) => Promise<boolean>;
+  deleteReview: (movieId: number) => Promise<boolean>;
   getMyReview: (movieId: string) => Promise<Review | null>;
 }
 
@@ -66,16 +65,12 @@ const MovieStatusContext = createContext<MovieStatusContextType | undefined>(
 export const useMovieStatus = () => {
   const context = useContext(MovieStatusContext);
   if (!context) {
-    throw new Error(
-      'useMovieStatus deve ser usado dentro de um MovieStatusProvider'
-    );
+    throw new Error('useMovieStatus deve ser usado dentro de um MovieStatusProvider');
   }
   return context;
 };
 
-export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
-  children,
-}) => {
+export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -134,7 +129,6 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
         const newMoviesMap: MovieMap = {};
         for (const row of statusData) {
           if (row.movies) {
-           
             newMoviesMap[row.movie_id] = {
               id: row.movies.id.toString(),
               titulo: row.movies.title,
@@ -210,10 +204,7 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
 
       if (uploadError) throw uploadError;
 
-      const { data } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-        
+      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
       if (!data || !data.publicUrl) throw new Error('Erro na URL pública.');
 
       const publicUrlWithCacheBust = `${data.publicUrl}?t=${Date.now()}`;
@@ -258,28 +249,39 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
     });
   };
 
-  const addReview = async (movie: Movie, rating: number, comment: string) => {
-    if (!session) return;
+  const addReview = async (movie: Movie, rating: number, comment: string): Promise<boolean> => {
+    if (!session) {
+      Alert.alert('Erro', 'Você precisa estar logado.');
+      return false;
+    }
     try {
       await addMovieToSupabase(movie);
       const numericMovieId = parseInt(movie.id, 10);
-      const { error } = await supabase.from('reviews').upsert({
-        user_id: session.user.id,
-        movie_id: numericMovieId,
-        rating: rating,
-        comment: comment,
-      }, { onConflict: 'user_id, movie_id' });
+      const { error } = await supabase.from('reviews').upsert(
+        {
+          user_id: session.user.id,
+          movie_id: numericMovieId,
+          rating: rating,
+          comment: comment,
+        },
+        { onConflict: 'user_id, movie_id' }
+      );
 
       if (error) throw error;
       Alert.alert('Sucesso!', 'Sua avaliação foi salva.');
+      return true;
     } catch (e: any) {
       console.error('Erro ao salvar review:', e);
       Alert.alert('Erro', 'Não foi possível salvar sua avaliação.');
+      return false;
     }
   };
 
-  const deleteReview = async (movieId: number) => {
-    if (!session) return;
+  const deleteReview = async (movieId: number): Promise<boolean> => {
+    if (!session) {
+      Alert.alert('Erro', 'Você precisa estar logado.');
+      return false;
+    }
     try {
       const { error } = await supabase
         .from('reviews')
@@ -289,9 +291,11 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
 
       if (error) throw error;
       Alert.alert('Sucesso', 'Review apagado.');
+      return true;
     } catch (e: any) {
       console.error('Erro ao apagar review:', e);
       Alert.alert('Erro', 'Não foi possível apagar o review.');
+      return false;
     }
   };
 
@@ -306,9 +310,6 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
         .eq('movie_id', numericMovieId)
         .single();
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Erro ao buscar review:', error);
-      }
       return data as Review;
     } catch (e) {
       return null;
@@ -332,9 +333,16 @@ export const MovieStatusProvider: React.FC<{ children: ReactNode }> = ({
     }
     await saveStatusToSupabase(session.user.id, movie.id, newStatus);
   };
-  const toggleLikeMovie = (movie: Movie) => { handleToggle(movie, (status) => ({ ...status, liked: !status.liked, disliked: false })); };
-  const toggleDislikeMovie = (movie: Movie) => { handleToggle(movie, (status) => ({ ...status, liked: false, disliked: !status.disliked })); };
-  const toggleSaveMovie = (movie: Movie) => { handleToggle(movie, (status) => ({ ...status, saved: !status.saved })); };
+
+  const toggleLikeMovie = (movie: Movie) => {
+    handleToggle(movie, (status) => ({ ...status, liked: !status.liked, disliked: false }));
+  };
+  const toggleDislikeMovie = (movie: Movie) => {
+    handleToggle(movie, (status) => ({ ...status, liked: false, disliked: !status.disliked }));
+  };
+  const toggleSaveMovie = (movie: Movie) => {
+    handleToggle(movie, (status) => ({ ...status, saved: !status.saved }));
+  };
 
   const value = {
     loading,

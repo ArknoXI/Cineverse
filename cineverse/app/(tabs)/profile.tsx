@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,6 +13,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { MovieCard } from '../../components/MovieCard';
@@ -44,13 +45,15 @@ interface ReviewItem {
 type ActiveTab = 'liked' | 'saved' | 'disliked' | 'reviews';
 
 export default function ProfileScreen() {
-  const { allMovies, movieStatus, loading, profile, session, signOut, updateAvatar, updateUsername } =
+  const { allMovies, movieStatus, loading, profile, session, signOut, updateAvatar, updateUsername, deleteReview } =
     useMovieStatus();
   
   const [activeTab, setActiveTab] = useState<ActiveTab>('liked');
   const [uploading, setUploading] = useState(false);
   const [myReviews, setMyReviews] = useState<ReviewItem[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
+  
+  const [refreshing, setRefreshing] = useState(false);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState('');
@@ -58,51 +61,70 @@ export default function ProfileScreen() {
 
   const router = useRouter();
 
-  useEffect(() => {
-    if (session?.user?.id) {
-      const fetchReviews = async () => {
-        setLoadingReviews(true);
-        try {
-          const { data, error } = await supabase
-            .from('reviews')
-            .select('*, movies(id, title, poster_url)')
-            .eq('user_id', session.user.id)
-            .order('created_at', { ascending: false });
+  const fetchReviews = async () => {
+    if (!session?.user?.id) return;
+    setLoadingReviews(true);
+    try {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*, movies(id, title, poster_url)')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
 
-          if (error) throw error;
-          if (data) setMyReviews(data as any);
-        } catch (e) {
-          console.error('Erro ao buscar reviews:', e);
-        } finally {
-          setLoadingReviews(false);
-        }
-      };
+      if (error) throw error;
+      if (data) setMyReviews(data as any);
+    } catch (e) {
+      console.error('Erro ao buscar reviews:', e);
+    } finally {
+      setLoadingReviews(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'reviews' && !refreshing) {
       fetchReviews();
     }
   }, [session, activeTab]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (activeTab === 'reviews') {
+      await fetchReviews();
+    }
+    setRefreshing(false);
+  }, [activeTab]);
+
+  const handleDeleteReview = (movieId: number) => {
+    Alert.alert("Apagar Review", "Tem certeza?", [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Apagar", style: "destructive", onPress: async () => {
+          // Chama o delete no contexto
+          const success = await deleteReview(movieId);
+          // SÓ remove da lista visualmente SE o banco confirmou que deletou (success === true)
+          if (success) {
+            setMyReviews(prev => prev.filter(r => r.movies.id !== movieId));
+          }
+        }}
+    ]);
+  };
+
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Desculpe, precisamos de permissão para acessar sua galeria.');
+      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria.');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
-      base64: true,
     });
-
-    if (result.canceled || !result.assets || !result.assets[0].base64) {
-      return;
+    if (!result.canceled && result.assets[0].uri) {
+      setUploading(true);
+      await updateAvatar(result.assets[0].uri);
+      setUploading(false);
     }
-
-    setUploading(true);
-    await updateAvatar(result.assets[0].base64);
-    setUploading(false);
   };
 
   const handleSaveName = async () => {
@@ -132,28 +154,31 @@ export default function ProfileScreen() {
   if (loading || !profile) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FFFFFF" />
-        </View>
+        <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#FFFFFF" /></View>
       </SafeAreaView>
     );
   }
 
   const renderReviewItem = ({ item }: { item: ReviewItem }) => (
-    <TouchableOpacity 
-      style={styles.reviewCard}
-      onPress={() => router.push({ pathname: '/movie/[id]', params: { id: item.movies?.id } })}
-    >
-      <Image source={{ uri: item.movies?.poster_url }} style={styles.reviewPoster} />
-      <View style={styles.reviewContent}>
-        <Text style={styles.reviewMovieTitle} numberOfLines={1}>{item.movies?.title}</Text>
-        <View style={styles.reviewStars}>
-          <StarRating rating={item.rating} size={14} />
-          <Text style={styles.reviewDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
+    <View style={styles.reviewCardWrapper}>
+      <TouchableOpacity 
+        style={styles.reviewCard}
+        onPress={() => router.push({ pathname: '/movie/[id]', params: { id: item.movies?.id } })}
+      >
+        <Image source={{ uri: item.movies?.poster_url }} style={styles.reviewPoster} />
+        <View style={styles.reviewContent}>
+          <Text style={styles.reviewMovieTitle} numberOfLines={1}>{item.movies?.title}</Text>
+          <View style={styles.reviewStars}>
+            <StarRating rating={item.rating} size={14} />
+            <Text style={styles.reviewDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
+          </View>
+          {item.comment && <Text style={styles.reviewComment} numberOfLines={3}>"{item.comment}"</Text>}
         </View>
-        {item.comment && <Text style={styles.reviewComment} numberOfLines={3}>"{item.comment}"</Text>}
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteReview(item.movies.id)}>
+        <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+      </TouchableOpacity>
+    </View>
   );
 
   return (
@@ -165,9 +190,7 @@ export default function ProfileScreen() {
           {profile.avatar_url ? (
             <Image source={{ uri: profile.avatar_url }} style={styles.avatarImage} />
           ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Ionicons name="person" size={60} color="#1C1C1E" />
-            </View>
+            <View style={styles.avatarPlaceholder}><Ionicons name="person" size={60} color="#1C1C1E" /></View>
           )}
           <View style={styles.editIcon}>
             {uploading ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Ionicons name="camera" size={18} color="#FFFFFF" />}
@@ -176,18 +199,18 @@ export default function ProfileScreen() {
         
         <View style={styles.usernameRow}>
           <Text style={styles.usernameText}>@{profile.username}</Text>
-          <TouchableOpacity 
-            style={styles.editNameButton} 
-            onPress={() => {
-              setNewName(profile.username);
-              setIsEditingName(true);
-            }}
-          >
+          <TouchableOpacity style={styles.editNameButton} onPress={() => { setNewName(profile.username); setIsEditingName(true); }}>
             <Ionicons name="pencil" size={18} color="#007AFF" />
           </TouchableOpacity>
         </View>
 
         <Text style={styles.emailText}>{session?.user?.email}</Text>
+        
+        <TouchableOpacity style={styles.aboutButton} onPress={() => router.push('/about')}>
+          <Ionicons name="information-circle-outline" size={20} color="#007AFF" />
+          <Text style={styles.aboutButtonText}>Sobre o App</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
           <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
           <Text style={styles.signOutText}>Sair</Text>
@@ -214,17 +237,16 @@ export default function ProfileScreen() {
                 style={[styles.segmentButton, activeTab === tabKey && styles.segmentButtonActive]}
                 onPress={() => setActiveTab(tabKey)}
               >
-                <Text style={[styles.segmentText, activeTab === tabKey && styles.segmentTextActive]}>
-                  {label} ({count})
-                </Text>
+                <Text style={[styles.segmentText, activeTab === tabKey && styles.segmentTextActive]}>{label} ({count})</Text>
               </TouchableOpacity>
             );
           }}
         />
       </View>
 
+      {/* LISTA PRINCIPAL com RefreshControl */}
       {activeTab === 'reviews' ? (
-        loadingReviews ? (
+        loadingReviews && !refreshing ? (
           <ActivityIndicator style={{ marginTop: 20 }} color="#fff" />
         ) : (
           <FlatList
@@ -232,6 +254,9 @@ export default function ProfileScreen() {
             keyExtractor={(item) => item.id.toString()}
             renderItem={renderReviewItem}
             contentContainerStyle={styles.lista}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFFFFF" />
+            }
             ListEmptyComponent={<View style={styles.emptyContainer}><Text style={styles.emptyText}>{getEmptyMessage()}</Text></View>}
           />
         )
@@ -241,10 +266,14 @@ export default function ProfileScreen() {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => <MovieCard movie={item} />}
           contentContainerStyle={styles.lista}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFFFFF" />
+          }
           ListEmptyComponent={<View style={styles.emptyContainer}><Text style={styles.emptyText}>{getEmptyMessage()}</Text></View>}
         />
       )}
 
+      {/* Modal de Edição de Nome */}
       <Modal visible={isEditingName} transparent animationType="fade">
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -289,18 +318,22 @@ const styles = StyleSheet.create({
   emailText: { fontFamily: 'Inter-Regular', color: '#8E8E93', fontSize: 14, marginBottom: 16 },
   signOutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#2C2C2E', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   signOutText: { color: '#FF3B30', fontFamily: 'Inter-Bold', fontSize: 16, marginLeft: 8 },
+  aboutButton: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 8 },
+  aboutButtonText: { color: '#007AFF', marginLeft: 5, fontFamily: 'Inter-Bold' },
   tabsContainer: { paddingHorizontal: 16, paddingVertical: 10, height: 60 },
   segmentButton: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#2C2C2E', marginRight: 8, justifyContent: 'center' },
   segmentButtonActive: { backgroundColor: '#007AFF' },
   segmentText: { fontFamily: 'Inter-Regular', color: '#FFFFFF', fontSize: 13 },
   segmentTextActive: { fontFamily: 'Inter-Bold', color: '#FFFFFF' },
-  reviewCard: { flexDirection: 'row', backgroundColor: '#2C2C2E', borderRadius: 12, padding: 12, marginBottom: 12 },
+  reviewCardWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2C2C2E', borderRadius: 12, marginBottom: 12, paddingRight: 10 },
+  reviewCard: { flex: 1, flexDirection: 'row', padding: 12 },
   reviewPoster: { width: 60, height: 90, borderRadius: 8, backgroundColor: '#3A3A3C' },
   reviewContent: { flex: 1, marginLeft: 12, justifyContent: 'flex-start' },
   reviewMovieTitle: { fontFamily: 'Inter-Bold', color: '#FFFFFF', fontSize: 16, marginBottom: 4 },
   reviewStars: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   reviewDate: { fontFamily: 'Inter-Regular', color: '#8E8E93', fontSize: 12 },
   reviewComment: { fontFamily: 'Inter-Regular', color: '#E5E5EA', fontSize: 14, fontStyle: 'italic' },
+  deleteButton: { padding: 10 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#2C2C2E', borderRadius: 16, padding: 20 },
   modalTitle: { fontFamily: 'Inter-Bold', fontSize: 18, color: '#FFFFFF', marginBottom: 16, textAlign: 'center' },
